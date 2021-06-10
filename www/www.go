@@ -19,7 +19,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Println("Received request from " + r.RemoteAddr)
 
-	count, err := rdb.Incr("counter").Result()
+	count, err := rdb.IncrBy("counter",1).Result()
 
 	fmt.Fprintf(w, "pod: "+hostname+" at your service in "+strconv.FormatInt(count, 10)+" times !\n")
 }
