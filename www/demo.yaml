@@ -1,0 +1,299 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: toolbox
+spec:
+  containers:
+  - name: toolbox
+    image: image-registry.openshift-image-registry.svc:5000/openshift/devops-toolbox:v0.1
+    volumeMounts:
+      - name: source
+        mountPath: /mnt
+    
+  volumes:
+    - name: source
+      persistentVolumeClaim:
+        claimName: my-source
+---
+
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: git-clone-demo
+spec:
+  workspaces:
+    - name: output
+      persistentVolumeClaim:
+        claimName: my-source
+    - name: ssh-directory
+      emptyDir: {}
+    - name: basic-auth
+      emptyDir: {}
+  taskRef:
+    name: git-clone
+  params:
+    - name: url
+      value: https://github.com/wuyexixi/demo.git
+      
+      
+---
+
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: build-demo
+spec:
+  taskRef:
+    name: golang-build
+  workspaces:
+  - name: source
+    persistentVolumeClaim:
+      claimName: my-source
+  params:
+  - name: package
+    value: www
+  - name: packages
+    value: www.go
+  - name: flags
+    value: '-o main'
+    
+---
+
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: build-image
+spec:
+  params:
+    - name: bin-name
+      type: string
+    - name: image-name
+      type: string
+    - name: registry
+      type: string
+    - name: base
+      type: string
+  steps:
+    - name: build-and-push
+      script: |
+        container=`buildah from $(params.base)`
+        buildah copy $container $(workspaces.bin.path)/$(params.bin-name) /opt
+        buildah config --cmd "/opt/$(params.bin-name)" $container
+        buildah commit $container $(params.image-name)
+        buildah rm $container
+        
+        cat /run/secrets/kubernetes.io/serviceaccount/token | xargs -I {} buildah --tls-verify=false login -u builder -p {} $(params.registry)
+        buildah --tls-verify=false push $(params.image-name) $(params.registry)/$(params.image-name)
+        
+      image: >-
+        image-registry.openshift-image-registry.svc:5000/openshift/devops-toolbox:v0.1
+  workspaces:
+    - name: bin
+    
+---
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: build-image-demo
+spec:
+  taskRef:
+    name: build-image
+  workspaces:
+  - name: bin
+    persistentVolumeClaim:
+      claimName: my-source
+  params:
+  - name: bin-name
+    value: main
+  - name: image-name
+    value: demo:v0.0
+  - name: registry
+    value: image-registry.openshift-image-registry.svc:5000/project-320064926
+  - name: base
+    value: redhat/ubi8-minimal
+
+
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: demo-pipeline
+  namespace: project-320064926
+spec:
+  params:
+    - name: git-url
+      description: ''
+    - name: go-package
+      description: ''
+    - name: go-main
+      description: ''
+    - name: go-flags
+      description: ''
+      default: '-o main'
+    - name: image-bin
+      description: ''
+      default: main
+    - name: image-tag
+      description: ''
+    - name: image-registry
+      description: ''
+      default: 'image-registry.openshift-image-registry.svc:5000/project-320064926'
+    - name: image-base
+      description: ''
+      default: redhat/ubi8-minimal
+  workspaces:
+    - name: pipeline-demo-pvc
+    - name: pipeline-empty-pvc
+
+  tasks:
+    - name: git-clone
+      taskRef:
+        kind: Task
+        name: git-clone
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: submodules
+          value: 'true'
+        - name: depth
+          value: '1'
+        - name: sslVerify
+          value: 'true'
+        - name: deleteExisting
+          value: 'true'
+        - name: verbose
+          value: 'true'
+        - name: gitInitImage
+          value: >-
+            gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/git-init:v0.21.0
+        - name: userHome
+          value: /root
+          
+      workspaces:
+        - name: output
+          workspace: pipeline-demo-pvc
+        - name: ssh-directory
+          workspace: pipeline-empty-pvc
+        - name: basic-auth
+          workspace: pipeline-empty-pvc
+          
+    - name: golang-build
+      runAfter:
+        - git-clone
+      taskRef:
+        kind: Task
+        name: golang-build
+      params:
+        - name: package
+          value: $(params.go-package)
+        - name: packages
+          value: $(params.go-main)
+        - name: version
+          value: latest
+        - name: flags
+          value: $(params.go-flags)
+        - name: GOOS
+          value: linux
+        - name: GOARCH
+          value: amd64
+        - name: GO111MODULE
+          value: auto
+          
+      workspaces:
+        - name: source
+          workspace: pipeline-demo-pvc
+          
+    - name: build-image
+      runAfter:
+        - golang-build
+      taskRef:
+        kind: Task
+        name: build-image
+      params:
+        - name: bin-name
+          value: $(params.image-bin)
+        - name: image-name
+          value: $(params.image-tag)
+        - name: registry
+          value: $(params.image-registry)
+        - name: base
+          value: $(params.image-base)
+          
+      workspaces:
+        - name: bin
+          workspace: pipeline-demo-pvc
+
+---
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: TriggerTemplate
+metadata:
+  name: demo-pipeline-template
+spec:
+  params:
+    - name: image-tag
+
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: demo-pipeline-run-
+      spec:
+        pipelineRef:
+          name: demo-pipeline
+          
+        params:
+          - name: git-url
+            value: https://github.com/wuyexixi/demo.git
+            
+          - name: go-package
+            value: www
+            
+          - name: go-main
+            value: www.go
+            
+          - name: image-tag
+            value: $(tt.params.image-tag)
+
+        workspaces:
+          - name: pipeline-demo-pvc
+            persistentVolumeClaim:
+              claimName: my-source
+          - name: pipeline-empty-pvc
+            emptyDir: {}
+
+---
+
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: TriggerBinding
+metadata:
+  name: demo-pipeline-binding
+spec:
+  params:
+  - name: image-tag
+    value: $(body.image-tag)
+
+---
+
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: EventListener
+metadata:
+  name: demo-listener
+spec:
+  triggers:
+    - name: demo-trigger
+      bindings:
+        - ref: demo-pipeline-binding
+      template:
+        ref: demo-pipeline-template
+
+---
+
+
+
+curl -X POST el-demo-listener:8080 \
+     -H 'Content-Type: application/json' \
+     -d '{"image-tag":"demo:v0.2"}'
+
+
+
