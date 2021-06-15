@@ -76,17 +76,20 @@ spec:
   steps:
     - name: build-and-push
       script: |
-        container=`buildah from $(params.base)`
-        buildah copy $container $(workspaces.bin.path)/$(params.bin-name) /opt
-        buildah config --cmd "/opt/$(params.bin-name)" $container
-        buildah commit $container $(params.image-name)
-        buildah rm $container
+        container=`buildah --storage-driver vfs from $(params.base)`
+        buildah --storage-driver vfs copy $container $(workspaces.bin.path)/$(params.bin-name) /opt
+        buildah --storage-driver vfs config --cmd "/opt/$(params.bin-name)" $container
+        buildah --storage-driver vfs commit $container $(params.image-name)
+        buildah --storage-driver vfs rm $container
         
         cat /run/secrets/kubernetes.io/serviceaccount/token | xargs -I {} buildah --tls-verify=false login -u builder -p {} $(params.registry)
-        buildah --tls-verify=false push $(params.image-name) $(params.registry)/$(params.image-name)
+        buildah --storage-driver vfs --tls-verify=false push $(params.image-name) $(params.registry)/$(params.image-name)
         
       image: >-
-        image-registry.openshift-image-registry.svc:5000/openshift/devops-toolbox:v0.1
+        image-registry.openshift-image-registry.svc:5000/openshift/devops-toolbox:v0.0
+
+      securityContext:
+        runAsUser: 1000
   workspaces:
     - name: bin
     
