@@ -176,10 +176,6 @@ spec:
       workspaces:
         - name: output
           workspace: pipeline-demo-pvc
-        - name: ssh-directory
-          workspace: pipeline-empty-pvc
-        - name: basic-auth
-          workspace: pipeline-empty-pvc
           
     - name: golang-build
       runAfter:
