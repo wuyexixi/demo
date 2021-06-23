@@ -1,14 +1,14 @@
-FROM ubuntu:16.04
+FROM image-registry.openshift-image-registry.svc:5000/openshift/devops-toolbox:v0.0
 
-RUN apt-get update -y && \
-    apt-get install -y python-pip python-dev
+RUN yum install python38 -y && \
+    yum install python3-pip -y
 
 # We copy just the requirements.txt first to leverage Docker cache
 COPY ./requirements.txt /app/requirements.txt
 
 WORKDIR /app
 
-RUN pip install -r requirements.txt
+RUN pip3 install -r requirements.txt
 
 COPY . /app
 
