@@ -21,7 +21,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	count, err := rdb.IncrBy("counter",1).Result()
 
-	fmt.Fprintf(w, "pod11: "+hostname+" at your service in "+strconv.FormatInt(count, 10)+" times !\n")
+	fmt.Fprintf(w, "pod12: "+hostname+" at your service in "+strconv.FormatInt(count, 10)+" times !\n")
 }
 
 func main() {
